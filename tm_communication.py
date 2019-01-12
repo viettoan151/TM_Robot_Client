@@ -1,9 +1,15 @@
-# -*- coding: utf-8 -*-
-from .tm_robot_state_rt import TmRobotStateRT
+#!/usr/bin/env python3
+"""tm_communication.py: File content TM5 robot control client TCP/IP class."""
+__author__ = "Viet Toan"
+__copyright__ = "Copyright 2019, ACM lab"
+__license__ = "None"
+__version__ = "1.0.0"
+__email__ = "viettoan151@gmail.com"
+__status__ = "Development"
 
+from tm_robot_state_rt import TmRobotStateRT, RobotError, RobotDataError
 import socket
 import threading
-import selectors
 import struct
 import time
 
@@ -18,14 +24,12 @@ class TmCommunication(object):
     CORRECT_RECVDATA_SIZE = 372
     MAX_SENDDATA_SIZE = 512
     SB_SIZE = 2048
-    data_lock = threading.Condition()
+    socket_lock = threading.Condition()
     def __init__(self, data_condv_rt=None, ip='192.168.0.10', port=6188, timeout_ms=5000, timeval_ms=500):
-        self.sockfd=None
-        self.optflag=1
-        self.thread_alive=False
-        print("[DEBUG]TM_COM: TMCommunication Constructor")
+        print("[INFO]TM_COM: TMCommunication Constructor")
         if COMMDEBUG:
-            print("This is DEBUG MODE of communication module!!!!")
+            print("[DEBUG]TM_COM: This is DEBUG MODE of communication module!!!!")
+        self.sockfd=None
         self.stateRT = TmRobotStateRT(data_condv_rt)
         self.sb_H = 0
         self.sb_T = 0
@@ -36,116 +40,115 @@ class TmCommunication(object):
         self.data_bytes = bytearray()
         self.data_ready = False
         print("[DEBUG]TM_COM: TMCommunication Construction DONE")
-    
-    def start(self):
-        self.halt()
-        #connect to server
-        self.sockfd= socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        '''Set socket options IPPROTO_TCP: TCP_NODELAY, TCP_QUICKACK
-        SOL_SOCKET: SO_REUSEADDR
-        self.sockfd.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
-        #can't set TCP_QUICKACK in python
-        self.sockfd.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
+
+    def connect(self):
         '''
+        connect Connect to host in configured IP and Port
+        :return: success
+        :exception socket.error: can't create connection to host
+        '''
+        #acquire the lock
+        self.socket_lock.acquire()
+        #configure the socket
+        self.sockfd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sockfd.settimeout(self.connect_timeout_s)
         try:
-            self.sockfd.connect((self.server_ip,self.server_port))
+            rtn = self.sockfd.connect((self.server_ip,self.server_port))
+            return rtn
         except socket.error as exc:
-            print('ERROR: Create connection: %s' % exc)
-            return -1
-        print("TM_COM: TM robot is Connected")
-        #create selector for socket I/O ready
-        self.sel = selectors.DefaultSelector()
-        self.sel.register(self.sockfd, selectors.EVENT_READ)
-        #create recieve thread
-        action_thread = threading.Thread(target=self.threadFunction)
-        action_thread.daemon = True
-        action_thread.start()
-        return 1
-    
-    def halt(self):
-        self.thread_alive=False
-        print("[INFO] TM_COM: halt\n")
+            print('[ERROR]TM_COM:Can\'t create connection to robot: %s' % exc)
+            raise exc
         
-    def disConnect(self):
+    def disconnect(self):
+        '''
+        disconnect
+        :return: NA
+        '''
         self.sockfd.close()
-        print("TM_COM: Connection to TM robot CLOSED")
-    
-    def writeToBuf(self, data):
-        #print("Write to buffer!")
-        self.data_lock.acquire()
-        self.data_ready = False
-        temp = bytearray(data)
-        #check data length
-        self.stateRT.parse_tcp_state_data(temp, 'None')
-        if(self.stateRT.data_length == self.CORRECT_RECVDATA_SIZE):
-            self.data_bytes = temp
-            self.data_ready = True
-        self.data_lock.notify()
-        self.data_lock.release()
-        
-    def readFromBuf(self):
-        self.data_lock.acquire()
-        while(not self.data_ready):
-            self.data_lock.wait()
-        ret = self.data_bytes.copy()
-        self.data_lock.release()
-        return ret
-    
-    def threadFunction(self):
-        self.sb_H = 0
-        self.sb_T = 0
-        self.thread_alive=True
-        while(self.thread_alive):
-            events=self.sel.select(timeout = self.thread_timeval_s)
-            if(len(events) > 0):
-                for key,mask in events:
-                    if mask&selectors.EVENT_READ:
-                        data = self.sockfd.recv(self.MAX_RECVDATA_SIZE)
-                        self.writeToBuf(data)
-            else:
-                if not self.thread_alive:
-                    break
-        self.disConnect();
-        print("[INFO] TM_COM: Recv. thread finished\n");
-    def sendCommandData(self, cmd_name, cmd_data):
-        return 0
-    
+        self.socket_lock.release()
+        if COMMDEBUG:
+            print("[INFO]TM_COM:Connection to TM robot CLOSED")
+
+    def readRobotState(self):
+        '''
+        readRobotSate open TCP/IP connect to host and receive host data
+        :return: 1-success
+        :exception RobotError : has error in robot which reported
+        :exception CommRecvError : report this error after 5 time attempt to read data
+        '''
+        rtn = -1
+        if COMMDEBUG:
+            print('[INFO]TM_COM:This is debug mode, no status to read')
+            return 1
+        self.connect()
+        for cnt in range(5):
+            try:
+                data = self.sockfd.recv(self.MAX_RECVDATA_SIZE)
+                rtn = self.stateRT.parse_tcp_state_data(data)
+                break
+            except RobotError as exc:
+                raise exc
+            except RobotDataError:
+                time.sleep(0.1)
+                print('[INFO]TM_COM:Retry receive data!')
+        self.disconnect()
+        if rtn ==-1:
+            raise CommRecvError(-1, '[ERROR]TM_COM:Error when receive robot data')
+        return rtn
+
     def sendCommandMsg(self, cmd_msg, blocking = True):
-        ret = -1;
+        '''
+        sendCommandMsg send a command message and also to read back robot state if blocking option is True
+        :param cmd_msg: a string of message
+        :param blocking: wait until command is finished by reading robot state
+        :return: 1-success
+        :exception RobotError: has error in robot which reported
+        :NOTE: Please don't use this interface to check Gripper state
+        '''
+        ret = -1
         cmd_len=len(cmd_msg)+4
         if(cmd_len > self.MAX_SENDDATA_SIZE):
+            print('[ERROR]TM_COM:Send data exceed max length')
             return ret
-        
         header=struct.pack('>HBB',cmd_len,0,0)
         cmd=bytearray(header + str.encode(cmd_msg))
-        if(self.sockfd):
-            print('Command length:%d' %(cmd_len))
+        if COMMDEBUG:
+            print('[DEBUG]TM_COM: Command length:%d' %(cmd_len))
             print(cmd)
-            if not COMMDEBUG:
-                if(COMMRUNMODE):
-                    self.stateRT.command_done = False
-                    self.sockfd.send(cmd)
-                else:
-                    c=input('[C]onfirm:')
-                    if c=='c' or 'C':
-                        self.sockfd.send(cmd)
-                    else:
-                        print('Cancelled command!')
-            
-            if blocking:
-                time.sleep(0.2)
+        else:
+            self.connect()
+            self.sockfd.send(cmd)
+            self.disconnect()
+        if blocking:
+            time.sleep(0.2)
+            try:
                 while(not self.checkCommandFinished()):
                     time.sleep(0.3)
-            ret = 1
-
+            except RobotError as exc:
+                print('[ERROR]TM_COM:Robot error!')
+                raise exc
+        ret = 1
         return ret
     
     def checkCommandFinished(self):
-        cur_data = self.readFromBuf()
-        self.stateRT.parse_tcp_state_data(cur_data,'robot_state')
-        return self.stateRT.command_done
+        '''
+        checkCommandFinished does the checking on robot state by try to read it
+        :return:
+            True: command is finished
+            False: command is still in execution, or can't read robot state
+        :exception RobotError: has error in robot which reported
+        :NOTE: Please don't use this interface to check Gripper state
+        '''
+        try:
+            rtn = self.readRobotState()
+            return self.stateRT.rb_CommandDone
+        except RobotError as exc:
+            raise exc
+        except CommRecvError:
+            return False
 
-            
+class CommRecvError(Exception):
+    def __init__(self, expression, message):
+        self.expression = expression
+        self.message = message
 
-        
