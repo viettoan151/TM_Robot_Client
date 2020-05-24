@@ -22,6 +22,7 @@ class TmRobotStateRT(object):
         self.rb_CommandDone = True  # robot done the execution, Gripper does not use this
         self.st_SafetyMode = 0
         self.st_ControlMode = 0
+        self.st_TeachMode = 0
         self.st_ReqQnCmdCount = 0
         self.st_ActJointsPos=[]
         self.st_TargetJointPos = []
@@ -55,6 +56,7 @@ class TmRobotStateRT(object):
         # Parse basic information
         self.st_SafetyMode = struct.unpack("<B",data_bytes[359:360])[0]
         self.st_ControlMode = struct.unpack("<B",data_bytes[360:361])[0]
+        self.st_TeachMode = struct.unpack("<B",data_bytes[361:362])[0]
         self.st_ReqQnCmdCount = struct.unpack("<I",data_bytes[362:366])[0]
         self.st_BuffEmptyFlag = struct.unpack("<I",data_bytes[366:370])[0]
         self.st_ErrorCode_0 = struct.unpack("<B",data_bytes[370:371])[0]

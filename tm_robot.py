@@ -185,6 +185,32 @@ class TM5_Robot(object):
                 rtn = False
         return rtn
 
+    def free_servo_enable(self, enable=True):
+        """
+        enable tp free robot servo
+        NOTE: Please check LED turn to Green light if enable = True
+        :param enable: enable or disable free mode of servo
+        :return: True when parameter 'enable' and final teach mode are same
+        """
+        rtn = False
+        tcp_command = 'cmd50 0 ' + '1' if enable else '0'
+        if self.is_sim:
+            print('This part has not been implemented yet')
+        elif TMROBOT_DEBUG:
+            print('Send free {} command:{}'.format('enable' if enable else 'disable',tcp_command))
+        else:
+            try:
+                # send blocking command to get robot state after command finished
+                self.RobotComm.sendCommandMsg(tcp_command)
+                # get back teach mode state
+                tmp = self.RobotComm.stateRT.st_TeachMode
+                # check teach mode and parameter
+                rtn = (enable == bool(tmp))
+            except RobotError as exc:
+                print('Error in enable free robot')
+                rtn = False
+        return rtn
+
     def test_robot(self):
         while (True):
             lett = input('Input your choise:')
